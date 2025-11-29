@@ -1,13 +1,6 @@
 import { GoogleGenAI, Type, Content } from "@google/genai";
 import { StorySetup, StorySegment, Memory } from "../types";
 
-// Ensure API Key is present
-if (!process.env.API_KEY) {
-  console.error("Missing process.env.API_KEY");
-}
-
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
 const MODEL_NAME = "gemini-3-pro-preview";
 
 // Schema for the structured output
@@ -25,6 +18,15 @@ const RESPONSE_SCHEMA = {
     },
   },
   required: ["story_segment", "choices"],
+};
+
+// Helper to initialize AI client lazily
+const getAiClient = () => {
+  const apiKey = process.env.API_KEY;
+  if (!apiKey) {
+    throw new Error("API Key is missing. Please check your environment variables.");
+  }
+  return new GoogleGenAI({ apiKey });
 };
 
 const mapMessagesToContents = (
@@ -71,27 +73,29 @@ export const generateNextSegment = async (
   newInput?: string
 ): Promise<StorySegment> => {
   
-  const contents = mapMessagesToContents(setup, previousMessages, memories);
-
-  if (newInput) {
-    contents.push({
-      role: "user",
-      parts: [{ text: newInput }],
-    });
-  }
-
-  const SYSTEM_INSTRUCTION = `
-  You are a collaborative novelist. 
-  
-  STRICT RULES:
-  1. Adapt exactly to the user's defined "Vibe", "Setting", and "Protagonist".
-  2. INCORPORATE the provided "MEMORY" items into the narrative logic if relevant.
-  3. If the user edits a previous message or asks for a change, adapt the story flow immediately to match the new context.
-  4. Output JSON with 'story_segment' and 'choices'.
-  5. Keep segments engaging (approx 150-250 words).
-  `;
-
   try {
+    // Initialize AI here to avoid top-level crash
+    const ai = getAiClient(); 
+    const contents = mapMessagesToContents(setup, previousMessages, memories);
+
+    if (newInput) {
+      contents.push({
+        role: "user",
+        parts: [{ text: newInput }],
+      });
+    }
+
+    const SYSTEM_INSTRUCTION = `
+    You are a collaborative novelist. 
+    
+    STRICT RULES:
+    1. Adapt exactly to the user's defined "Vibe", "Setting", and "Protagonist".
+    2. INCORPORATE the provided "MEMORY" items into the narrative logic if relevant.
+    3. If the user edits a previous message or asks for a change, adapt the story flow immediately to match the new context.
+    4. Output JSON with 'story_segment' and 'choices'.
+    5. Keep segments engaging (approx 150-250 words).
+    `;
+
     const result = await ai.models.generateContent({
       model: MODEL_NAME,
       contents: contents,
@@ -114,8 +118,14 @@ export const generateNextSegment = async (
     }
   } catch (error) {
     console.error("GenAI Error:", error);
+    
+    let errorMessage = "The ink has run dry momentarily. Please try regenerating.";
+    if (error instanceof Error && error.message.includes("API Key")) {
+      errorMessage = "Configuration Error: API Key is missing. Please set the API_KEY environment variable.";
+    }
+
     return {
-      content: "The ink has run dry momentarily. Please try regenerating.",
+      content: errorMessage,
       choices: ["Try again"],
     };
   }
