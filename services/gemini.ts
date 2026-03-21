@@ -1,89 +1,49 @@
-const generateNextSegment = async (...) => {
-
-  const response = await fetch("https://api.deepseek.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${process.env.API_KEY}`
-    },
-    body: JSON.stringify({
-      model: "deepseek-chat",
-      messages: contents.map(c => ({
-        role: c.role,
-        content: c.parts[0].text
-      })),
-      temperature: 0.85
-    })
-  });
-
-  const data = await response.json();
-
-  return {
-    content: data.choices[0].message.content,
-    choices: ["Continue", "Change direction", "Add conflict"]
-  };
-};
 import { StorySetup, StorySegment, Memory } from "../types";
 
-const MODEL_NAME = "gemini-3-pro-preview";
-
-// Schema for the structured output
-const RESPONSE_SCHEMA = {
-  type: Type.OBJECT,
-  properties: {
-    story_segment: {
-      type: Type.STRING,
-      description: "The narrative content of the story segment. Use markdown for formatting (bold, italics).",
-    },
-    choices: {
-      type: Type.ARRAY,
-      items: { type: Type.STRING },
-      description: "3 to 4 short, distinct plot options for the user to choose from to continue the story.",
-    },
-  },
-  required: ["story_segment", "choices"],
-};
-
-// Helper to initialize AI client lazily
-const getAiClient = () => {
-  const apiKey = process.env.API_KEY;
-  if (!apiKey) {
-    throw new Error("API Key is missing. Please check your environment variables.");
-  }
-  return new GoogleGenAI({ apiKey });
-};
+const MODEL_NAME = "deepseek-chat";
 
 const mapMessagesToContents = (
   setup: StorySetup,
-  messages: { role: 'user' | 'model'; text: string }[],
+  messages: { role: "user" | "model"; text: string }[],
   memories: Memory[]
-): Content[] => {
-  const history: Content[] = [];
+) => {
+  const activeMemories = memories
+    .filter((m) => m.active)
+    .map((m) => `- ${m.text}`)
+    .join("\n");
 
-  const activeMemories = memories.filter(m => m.active).map(m => `- ${m.text}`).join('\n');
-
-  // Initial Prompt Context with Memory Injection
   const initialPrompt = `
-    Story Configuration:
-    - Setting: ${setup.setting}
-    - Vibe/Tone: ${setup.vibe}
-    - Protagonist: ${setup.protagonist}
+Story Configuration:
+- Setting: ${setup.setting}
+- Vibe/Tone: ${setup.vibe}
+- Protagonist: ${setup.protagonist}
 
-    ${activeMemories ? `IMPORTANT MEMORY (Always remember these details):\n${activeMemories}` : ''}
-    
-    Instruction: Write the next segment of the story based on the history below. 
-    If this is the beginning, write the opening scene.
-  `;
+${activeMemories ? `IMPORTANT MEMORY:\n${activeMemories}` : ""}
 
-  history.push({
-    role: "user",
-    parts: [{ text: initialPrompt }],
-  });
+Instruction:
+Write the next segment of the story.
+Keep length around 150-250 words.
+
+After the story, give 3-4 short plot choices.
+Return JSON like:
+
+{
+"story_segment": "...",
+"choices": ["choice1","choice2","choice3"]
+}
+`;
+
+  const history = [
+    {
+      role: "system",
+      content: initialPrompt,
+    },
+  ];
 
   messages.forEach((msg) => {
     history.push({
-      role: msg.role,
-      parts: [{ text: msg.text }],
+      role: msg.role === "model" ? "assistant" : "user",
+      content: msg.text,
     });
   });
 
@@ -92,64 +52,70 @@ const mapMessagesToContents = (
 
 export const generateNextSegment = async (
   setup: StorySetup,
-  previousMessages: { role: 'user' | 'model'; text: string }[],
+  previousMessages: { role: "user" | "model"; text: string }[],
   memories: Memory[],
   newInput?: string
 ): Promise<StorySegment> => {
-  
   try {
-    // Initialize AI here to avoid top-level crash
-    const ai = getAiClient(); 
-    const contents = mapMessagesToContents(setup, previousMessages, memories);
+    const apiKey = process.env.API_KEY;
+
+    if (!apiKey) {
+      throw new Error("Missing API key");
+    }
+
+    const messages = mapMessagesToContents(
+      setup,
+      previousMessages,
+      memories
+    );
 
     if (newInput) {
-      contents.push({
+      messages.push({
         role: "user",
-        parts: [{ text: newInput }],
+        content: newInput,
       });
     }
 
-    const SYSTEM_INSTRUCTION = `
-    You are a collaborative novelist. 
-    
-    STRICT RULES:
-    1. Adapt exactly to the user's defined "Vibe", "Setting", and "Protagonist".
-    2. INCORPORATE the provided "MEMORY" items into the narrative logic if relevant.
-    3. If the user edits a previous message or asks for a change, adapt the story flow immediately to match the new context.
-    4. Output JSON with 'story_segment' and 'choices'.
-    5. Keep segments engaging (approx 150-250 words).
-    `;
+    const response = await fetch(
+      "https://api.deepseek.com/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: MODEL_NAME,
+          messages,
+          temperature: 0.85,
+        }),
+      }
+    );
 
-    const result = await ai.models.generateContent({
-      model: MODEL_NAME,
-      contents: contents,
-      config: {
-        systemInstruction: SYSTEM_INSTRUCTION,
-        responseMimeType: "application/json",
-        responseSchema: RESPONSE_SCHEMA,
-        temperature: 0.85,
-      },
-    });
+    const data = await response.json();
 
-    if (result.text) {
-      const parsed = JSON.parse(result.text);
+    let text = data.choices?.[0]?.message?.content || "";
+
+    // 尝试解析 JSON
+    try {
+      const parsed = JSON.parse(text);
+
       return {
         content: parsed.story_segment,
         choices: parsed.choices || [],
       };
-    } else {
-      throw new Error("No text generated");
+    } catch {
+      return {
+        content: text,
+        choices: ["Continue", "Add conflict", "Change direction"],
+      };
     }
   } catch (error) {
-    console.error("GenAI Error:", error);
-    
-    let errorMessage = "The ink has run dry momentarily. Please try regenerating.";
-    if (error instanceof Error && error.message.includes("API Key")) {
-      errorMessage = "Configuration Error: API Key is missing. Please set the API_KEY environment variable.";
-    }
+    console.error(error);
 
     return {
-      content: errorMessage,
+      content:
+        "Something went wrong. Check API key or network.",
       choices: ["Try again"],
     };
   }
