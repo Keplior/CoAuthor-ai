@@ -57,7 +57,7 @@ export const generateNextSegment = async (
   newInput?: string
 ): Promise<StorySegment> => {
   try {
-    const apiKey = process.env.API_KEY;
+    const apiKey = import.meta.env.VITE_API_KEY;
 
     if (!apiKey) {
       throw new Error("Missing API key");
