@@ -1,4 +1,28 @@
-import { GoogleGenAI, Type, Content } from "@google/genai";
+const generateNextSegment = async (...) => {
+
+  const response = await fetch("https://api.deepseek.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${process.env.API_KEY}`
+    },
+    body: JSON.stringify({
+      model: "deepseek-chat",
+      messages: contents.map(c => ({
+        role: c.role,
+        content: c.parts[0].text
+      })),
+      temperature: 0.85
+    })
+  });
+
+  const data = await response.json();
+
+  return {
+    content: data.choices[0].message.content,
+    choices: ["Continue", "Change direction", "Add conflict"]
+  };
+};
 import { StorySetup, StorySegment, Memory } from "../types";
 
 const MODEL_NAME = "gemini-3-pro-preview";
