@@ -22,27 +22,34 @@ ${activeMemories ? `IMPORTANT MEMORY:\n${activeMemories}` : ""}
 
 Instruction:
 Write the next segment of the story.
-Keep length around 150-250 words.
 
-After the story, give 3-4 short plot choices.
-Return JSON like:
+Return STRICT JSON format:
 
 {
-"story_segment": "...",
-"choices": ["choice1","choice2","choice3"]
+  "story_segment": "150-250 word story text",
+  "choices": [
+    "choice 1",
+    "choice 2",
+    "choice 3"
+  ]
 }
 `;
 
   const history = [
     {
       role: "system",
+      content:
+        "You are a collaborative novelist. Always output valid JSON.",
+    },
+    {
+      role: "user",
       content: initialPrompt,
     },
   ];
 
   messages.forEach((msg) => {
     history.push({
-      role: msg.role === "model" ? "assistant" : "user",
+      role: msg.role === "model" ? "assistant" : msg.role,
       content: msg.text,
     });
   });
@@ -57,26 +64,12 @@ export const generateNextSegment = async (
   newInput?: string
 ): Promise<StorySegment> => {
   try {
-   const apiKey = getAiClient();
+    const apiKey = import.meta.env.VITE_API_KEY;
 
-const result = await fetch("https://api.deepseek.com/v1/chat/completions", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    "Authorization": `Bearer ${apiKey}`
-  },
-  body: JSON.stringify({
-    model: "deepseek-chat",
-    messages: contents.map(c => ({
-      role: c.role === "model" ? "assistant" : c.role,
-      content: c.parts[0].text
-    })),
-    temperature: 0.85
-  })
-});
+    if (!apiKey) {
+      throw new Error("Missing API key");
+    }
 
-const data = await result.json();
-const text = data.choices?.[0]?.message?.content;
     const messages = mapMessagesToContents(
       setup,
       previousMessages,
@@ -100,36 +93,31 @@ const text = data.choices?.[0]?.message?.content;
         },
         body: JSON.stringify({
           model: MODEL_NAME,
-          messages,
+          messages: messages,
           temperature: 0.85,
+          response_format: { type: "json_object" },
         }),
       }
     );
 
     const data = await response.json();
 
-    let text = data.choices?.[0]?.message?.content || "";
+    const text =
+      data?.choices?.[0]?.message?.content ||
+      '{"story_segment":"Error generating story.","choices":["Try again"]}';
 
-    // 尝试解析 JSON
-    try {
-      const parsed = JSON.parse(text);
+    const parsed = JSON.parse(text);
 
-      return {
-        content: parsed.story_segment,
-        choices: parsed.choices || [],
-      };
-    } catch {
-      return {
-        content: text,
-        choices: ["Continue", "Add conflict", "Change direction"],
-      };
-    }
+    return {
+      content: parsed.story_segment,
+      choices: parsed.choices || [],
+    };
   } catch (error) {
     console.error(error);
 
     return {
       content:
-        "Something went wrong. Check API key or network.",
+        "Story engine failed. Check API key or redeploy.",
       choices: ["Try again"],
     };
   }
