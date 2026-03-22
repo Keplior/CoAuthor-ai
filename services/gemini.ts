@@ -57,12 +57,26 @@ export const generateNextSegment = async (
   newInput?: string
 ): Promise<StorySegment> => {
   try {
-    const apiKey = import.meta.env.VITE_API_KEY;
+   const apiKey = getAiClient();
 
-    if (!apiKey) {
-      throw new Error("Missing API key");
-    }
+const result = await fetch("https://api.deepseek.com/v1/chat/completions", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${apiKey}`
+  },
+  body: JSON.stringify({
+    model: "deepseek-chat",
+    messages: contents.map(c => ({
+      role: c.role === "model" ? "assistant" : c.role,
+      content: c.parts[0].text
+    })),
+    temperature: 0.85
+  })
+});
 
+const data = await result.json();
+const text = data.choices?.[0]?.message?.content;
     const messages = mapMessagesToContents(
       setup,
       previousMessages,
